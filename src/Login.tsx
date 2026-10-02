@@ -4,6 +4,8 @@ import { GetTime, GetDate } from "./sys/apis/Date";
 import pwd from "./sys/apis/Crypto";
 import DialogContainer, { setDialogFn } from "./sys/apis/Dialogs";
 import { User } from "./sys/types";
+import Setup from "./Setup";
+import { loginCloudAccount, pushCloudSnapshot, registerCloudAccount, restoreCloudAccount } from "./sys/cloud";
 const pw = new pwd();
 
 export default function Login() {
@@ -17,6 +19,11 @@ export default function Login() {
 	const [profilePictures, setProfilePictures] = useState<{ [key: string]: string | null }>({});
 	const [wallpaper, setWallpaper] = useState<string | null>(null);
 	const [changingpw, setChangepw] = useState(false);
+	const [cloudMode, setCloudMode] = useState(false);
+	const [showSetup, setShowSetup] = useState(false);
+	const [cloudBusy, setCloudBusy] = useState(false);
+	const cloudUserRef = useRef<HTMLInputElement>(null);
+	const cloudPassRef = useRef<HTMLInputElement>(null);
 	const passwordRef = useRef<HTMLInputElement>(null);
 	useEffect(() => {
 		const intervalId = setInterval(() => {
@@ -27,32 +34,41 @@ export default function Login() {
 	}, []);
 	useEffect(() => {
 		const FS = async () => {
-			const entries = await Filer.fs.promises.readdir("/home/");
-			const dirEntries = await Promise.all(
-				entries.map(async entry => {
-					const stat = await Filer.fs.promises.stat(`/home/${entry}`);
-					if (stat.isDirectory()) {
-						try {
-							await Filer.fs.promises.access(`/home/${entry}/user.json`);
-							return entry;
-						} catch (error) {
-							return null;
+			try {
+				const entries = await Filer.fs.promises.readdir("/home/");
+				const dirEntries = await Promise.all(
+					entries.map(async entry => {
+						const stat = await Filer.fs.promises.stat(`/home/${entry}`);
+						if (stat.isDirectory()) {
+							try {
+								await Filer.fs.promises.access(`/home/${entry}/user.json`);
+								return entry;
+							} catch (error) {
+								return null;
+							}
 						}
-					}
-				}),
-			);
-			const directories = dirEntries.filter(entry => entry !== null);
-			// @ts-expect-error
-			setAccounts(directories);
+					}),
+				);
+				const directories = dirEntries.filter(entry => entry !== null);
+				// @ts-expect-error
+				setAccounts(directories);
+			} catch {
+				setAccounts([]);
+			}
 		};
 		FS();
 	}, []);
 	useEffect(() => {
 		const getDefUsr = async () => {
-			const data = await Filer.fs.promises.readFile("/system/etc/terbium/settings.json", "utf8");
-			const res = JSON.parse(data);
-			setWallpaper(JSON.parse(await Filer.fs.promises.readFile(`/home/${res.defaultUser}/settings.json`)).wallpaper);
-			setSelectedUser(res.defaultUser);
+			try {
+				const data = await Filer.fs.promises.readFile("/system/etc/terbium/settings.json", "utf8");
+				const res = JSON.parse(data);
+				setWallpaper(JSON.parse(await Filer.fs.promises.readFile(`/home/${res.defaultUser}/settings.json`)).wallpaper);
+				setSelectedUser(res.defaultUser);
+			} catch {
+				setIsLoggingIn(true);
+				setCloudMode(true);
+			}
 		};
 		getDefUsr();
 	}, []);
@@ -100,7 +116,74 @@ export default function Login() {
 			}
 		}
 	};
-	const Err = () => {
+	const currentDefaultUser = async () => {
+		try {
+			const settings = JSON.parse(await Filer.fs.promises.readFile("/system/etc/terbium/settings.json", "utf8"));
+			return settings.defaultUser || usernameFallback();
+		} catch {
+			return usernameFallback();
+		}
+	};
+
+	const usernameFallback = () => selectedUser && selectedUser !== "/home/user/" ? selectedUser : cloudUserRef.current?.value.trim() || "user";
+
+	const cloudLogin = async (restore: boolean) => {
+		const username = cloudUserRef.current?.value.trim();
+		const password = cloudPassRef.current?.value || "";
+		if (!username || !password) return Err("Enter cloud username and password");
+		setCloudBusy(true);
+		try {
+			if (restore) {
+				await restoreCloudAccount(username, password);
+			} else {
+				await loginCloudAccount(username, password);
+			}
+			const osUser = await currentDefaultUser();
+			sessionStorage.setItem("logged-in", "true");
+			sessionStorage.setItem("currAcc", osUser);
+			window.location.reload();
+		} catch (error) {
+			Err(error instanceof Error ? error.message : "Cloud login failed");
+		} finally {
+			setCloudBusy(false);
+		}
+	};
+
+	const cloudRegister = async () => {
+		const username = cloudUserRef.current?.value.trim();
+		const password = cloudPassRef.current?.value || "";
+		if (!username || !password) return Err("Enter cloud username and password");
+		setCloudBusy(true);
+		try {
+			if (localStorage.getItem("setup")) {
+				await registerCloudAccount(username, password);
+			} else {
+				sessionStorage.setItem("pendingCloudUser", username);
+				sessionStorage.setItem("pendingCloudPassword", password);
+				setShowSetup(true);
+				return;
+			}
+			await pushCloudSnapshot();
+			const osUser = await currentDefaultUser();
+			sessionStorage.setItem("logged-in", "true");
+			sessionStorage.setItem("currAcc", osUser);
+			window.location.reload();
+		} catch (error) {
+			Err(error instanceof Error ? error.message : "Cloud registration failed");
+		} finally {
+			setCloudBusy(false);
+		}
+	};
+
+	const Err = (message = "Incorrect Password") => {
+		if (cloudMode && cloudPassRef.current) {
+			cloudPassRef.current.classList.add("ring-[#ff7e7e5a]", "ring-[2px]", "border-[#ff7e7ed5]", "placeholder-[#ff7e7e6b]");
+			cloudPassRef.current.value = "";
+			cloudPassRef.current.placeholder = message;
+			cloudPassRef.current.addEventListener("keydown", () => {
+				cloudPassRef.current?.classList.remove("ring-[#ff7e7e5a]", "ring-[2px]", "border-[#ff7e7ed5]", "placeholder-[#ff7e7e6b]");
+			});
+		}
 		if (passwordRef.current) {
 			passwordRef.current.classList.add("ring-[#ff7e7e5a]", "ring-[2px]", "border-[#ff7e7ed5]", "placeholder-[#ff7e7e6b]");
 			passwordRef.current.value = "";
@@ -116,6 +199,7 @@ export default function Login() {
 
 	useEffect(() => {
 		const keyCheck = async (e: KeyboardEvent) => {
+			if (cloudMode || !localStorage.getItem("setup")) return;
 			if (e.key === "Escape") {
 				setIsLoggingIn(false);
 			}
@@ -141,6 +225,8 @@ export default function Login() {
 		};
 	}, [isLoggingIn, selectedUser, changingpw]);
 
+	if (showSetup) return <Setup />;
+
 	return (
 		<>
 			<div
@@ -153,6 +239,7 @@ export default function Login() {
 			<div
 				className={`login_container relative flex flex-col justify-center items-center size-full gap-5`}
 				onMouseDown={() => {
+					if (cloudMode) return;
 					if (!isLoggingIn) {
 						const user = JSON.parse(localStorage.getItem("setup") || "{}");
 						if (user.password !== false) {
@@ -200,8 +287,51 @@ export default function Login() {
 						<div className="date text-2xl">{date}</div>
 					</div>
 					<h1 className="text-[#ffffffcb] text-xl font-bold">Press any key to login</h1>
+					<button
+						className="cursor-pointer bg-[#ffffff10] border-[1px] border-[#ffffff10] rounded-[6px] px-[14px] py-[8px] text-[#ffffffcb] font-bold transition duration-150 hover:bg-[#ffffff20]"
+						onMouseDown={e => {
+							e.stopPropagation();
+							setCloudMode(true);
+							setIsLoggingIn(true);
+						}}
+					>
+						Cloud Login
+					</button>
 				</div>
 				<DialogContainer />
+				{cloudMode && (
+					<div className="absolute z-20 flex flex-col justify-center items-center gap-4 size-full backdrop-blur-lg bg-[#0e0e0ee6]">
+						<div className="date_time text-[#ffffff87] font-extrabold flex flex-col justify-center items-center">
+							<div className="time text-5xl">Cloud Login</div>
+							<div className="date text-base max-w-[360px] text-center">Syncs users, settings, installed apps and files so this browser can be restored later.</div>
+						</div>
+						<input ref={cloudUserRef} type="text" autoComplete="username" placeholder="Cloud username" className="w-[280px] cursor-[var(--cursor-text)] bg-[#ffffff10] border-[1px] border-[#ffffff10] rounded-[6px] px-[10px] py-[8px] text-[#ffffff] placeholder-[#ffffff38] transition duration-150 focus:outline-hidden focus:ring-[2.5px] focus:ring-[#7e91ff5a]" />
+						<input
+							ref={cloudPassRef}
+							type="password"
+							autoComplete="current-password"
+							placeholder="Cloud password"
+							className="w-[280px] cursor-[var(--cursor-text)] bg-[#ffffff10] border-[1px] border-[#ffffff10] rounded-[6px] px-[10px] py-[8px] text-[#ffffff] placeholder-[#ffffff38] transition duration-150 focus:outline-hidden focus:ring-[2.5px] focus:ring-[#7e91ff5a]"
+							onKeyDown={e => {
+								if (e.key === "Enter") cloudLogin(!localStorage.getItem("setup"));
+							}}
+						/>
+						<div className="flex flex-wrap justify-center gap-2 max-w-[360px]">
+							<button disabled={cloudBusy} className="cursor-pointer bg-[#ffffff10] border-[1px] border-[#ffffff10] rounded-[6px] px-[12px] py-[8px] text-[#ffffffcb] font-bold disabled:opacity-50" onMouseDown={() => cloudLogin(!localStorage.getItem("setup"))}>
+								{localStorage.getItem("setup") ? "Login" : "Restore from cloud"}
+							</button>
+							<button disabled={cloudBusy} className="cursor-pointer bg-[#ffffff10] border-[1px] border-[#ffffff10] rounded-[6px] px-[12px] py-[8px] text-[#ffffffcb] font-bold disabled:opacity-50" onMouseDown={cloudRegister}>
+								{localStorage.getItem("setup") ? "Create cloud backup" : "New cloud account"}
+							</button>
+							{localStorage.getItem("setup") && (
+								<button disabled={cloudBusy} className="cursor-pointer bg-[#ffffff10] border-[1px] border-[#ffffff10] rounded-[6px] px-[12px] py-[8px] text-[#ffffffcb] font-bold disabled:opacity-50" onMouseDown={() => cloudLogin(true)}>
+									Restore
+								</button>
+							)}
+						</div>
+						<button className="cursor-pointer text-[#ffffff68] font-bold hover:text-[#ffffffcb]" onMouseDown={() => setCloudMode(false)}>Local login</button>
+					</div>
+				)}
 				<div
 					className={`
                     absolute

@@ -81,7 +81,7 @@ const Root = () => {
 						}
 					}
 				} else {
-					setPag(<Setup />);
+					setPag(<Login />);
 				}
 			};
 			upd();

@@ -8,6 +8,7 @@ import "./sys/gui/styles/dropdown.css";
 import pwd from "./sys/apis/Crypto";
 import { init } from "./init";
 import { fileExists, User } from "./sys/types";
+import { registerCloudAccount } from "./sys/cloud";
 const pw = new pwd();
 
 export default function Setup() {
@@ -82,6 +83,18 @@ export default function Setup() {
 			await Filer.fs.promises.writeFile("//apps/system/settings.tapp/wisp-servers.json", JSON.stringify(stockDat));
 		}
 		localStorage.setItem("setup", "true");
+		const pendingCloudUser = sessionStorage.getItem("pendingCloudUser");
+		const pendingCloudPassword = sessionStorage.getItem("pendingCloudPassword");
+		if (pendingCloudUser && pendingCloudPassword) {
+			try {
+				await registerCloudAccount(pendingCloudUser, pendingCloudPassword);
+				sessionStorage.setItem("currAcc", usr);
+				sessionStorage.setItem("logged-in", "true");
+			} finally {
+				sessionStorage.removeItem("pendingCloudUser");
+				sessionStorage.removeItem("pendingCloudPassword");
+			}
+		}
 		if (sessionStorage!.getItem("logged-in") === null || sessionStorage!.getItem("logged-in") === undefined || sessionStorage!.getItem("logged-in") === "false") {
 			window.location.reload();
 			sessionStorage.setItem("firstRun", "true");

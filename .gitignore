@@ -25,6 +25,9 @@ dist-ssr
 *.sw?
 .env
 
+# Terbium cloud-login data
+.terbium-cloud
+
 # Other
 src/apps.json
 src/hash.json
