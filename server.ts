@@ -13,6 +13,7 @@ import Socket from "ws";
 import Head from "ws";
 import cors from "cors";
 import config from "dotenv";
+import { registerCloudRoutes } from "./src/cloudServer";
 
 export function TServer() {
 	config.config();
@@ -22,6 +23,8 @@ export function TServer() {
 	console.log("Starting Terbium...");
 	const app = express();
 	app.use(cookieParser());
+	app.use(express.json({ limit: "50mb" }));
+	registerCloudRoutes(app);
 
 	const masqrCheck = process.env.MASQR && process.env.MASQR.toLowerCase() === "true";
 	if (masqrCheck) {
